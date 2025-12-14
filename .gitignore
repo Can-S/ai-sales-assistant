@@ -58,8 +58,8 @@ htmlcov/
 secrets/
 .secrets/
 
-# UV lock file (optional - some prefer to commit this)
+# UV lock file
 uv.lock
 
-# Antigravity brain directory (local AI assistant artifacts)
+# Antigravity brain directory 
 .gemini/
