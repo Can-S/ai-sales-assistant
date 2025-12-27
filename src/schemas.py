@@ -22,6 +22,8 @@ class State(MessagesState):
     # This state class has the messages key build in
     message_input: dict
     classification_decision: Literal["ignore", "respond", "notify"]
+    thread_id: str  # Track user conversations
+
 
 class MessageData(TypedDict):
     id: str
@@ -34,6 +36,24 @@ class MessageData(TypedDict):
     platform: Literal["gmail", "instagram", "whatsapp"]
 
 class UserPreferences(BaseModel):
-    """Updated user preferences based on user's feedback."""
-    chain_of_thought: str = Field(description="Reasoning about which user preferences need to add/update if required")
-    user_preferences: str = Field(description="Updated user preferences")
+    """User-specific preferences and learned behaviors."""
+    
+    # User identification
+    platform: str
+    username: str
+    
+    # Communication preferences
+    preferred_response_style: str | None = None  # e.g., "formal", "casual", "detailed"
+    preferred_language: str = "en"
+    
+    # Business context
+    company_size: int | None = None
+    industry: str | None = None
+    
+    # Interaction history
+    total_messages: int = 0
+    last_interaction: str | None = None
+    
+    # HITL feedback patterns
+    common_edits: list[str] = []  # Track what user commonly edits
+    ignored_suggestions: list[str] = []  # Track what user ignores

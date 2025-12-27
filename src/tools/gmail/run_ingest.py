@@ -23,7 +23,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Setup paths
-_ROOT = Path(__file__).parent.absolute()
+_ROOT = Path(__file__).parent.parent.parent.parent.absolute()
 _SECRETS_DIR = _ROOT / ".secrets"
 TOKEN_PATH = _SECRETS_DIR / "token.json"
 
@@ -143,12 +143,21 @@ async def ingest_email_to_langgraph(email_data, graph_name, url="http://127.0.0.
     # Connect to LangGraph server
     client = get_client(url=url)
     
-    # Create a consistent UUID for the thread
-    raw_thread_id = email_data["thread_id"]
+    # Create a consistent UUID for the thread based on SENDER to preserve context
+    # This allows multiple emails from the same person to share the same history
+    sender_email = email_data["from_email"]
+    # Extract email if in "Name <email>" format
+    if "<" in sender_email and ">" in sender_email:
+        import re
+        match = re.search(r'<([^>]+)>', sender_email)
+        if match:
+            sender_email = match.group(1)
+            
+    # Generate thread ID from the sanitized sender email
     thread_id = str(
-        uuid.UUID(hex=hashlib.md5(raw_thread_id.encode("UTF-8")).hexdigest())
+        uuid.UUID(hex=hashlib.md5(sender_email.lower().strip().encode("UTF-8")).hexdigest())
     )
-    print(f"Gmail thread ID: {raw_thread_id} → LangGraph thread ID: {thread_id}")
+    print(f"Gmail sender: {sender_email} -> LangGraph thread ID: {thread_id}")
     
     thread_exists = False
     try:
@@ -187,11 +196,13 @@ async def ingest_email_to_langgraph(email_data, graph_name, url="http://127.0.0.
     run = await client.runs.create(
         thread_id,
         graph_name,
-        input={"email_input": {
-            "from": email_data["from_email"],
-            "to": email_data["to_email"],
+        input={"message_input": {
+            "sender": email_data["from_email"],
+            "recipient": email_data["to_email"],
             "subject": email_data["subject"],
-            "body": email_data["page_content"],
+            "content": email_data["page_content"],
+            "timestamp": email_data["send_time"],
+            "platform": "gmail",
             "id": email_data["id"]
         }},
         multitask_strategy="rollback",

@@ -39,13 +39,15 @@ def get_tools(tool_names: Optional[List[str]] = None, include_gmail: bool = Fals
             from src.tools.gmail.gmail_tools import (
                 fetch_emails_tool,
                 send_email_tool,
-                check_calendar_tool
+                check_calendar_tool,
+                write_gmail_email
             )
             
             all_tools.update({
                 "fetch_emails_tool": fetch_emails_tool,
                 "send_email_tool": send_email_tool,
                 "check_calendar_tool": check_calendar_tool,
+                "write_message": write_gmail_email, # Override write_message with Gmail implementation
             })
         except ImportError:
             pass

@@ -20,4 +20,12 @@ dependencies = ["langchain>=0.3.9",
     "rich",
     "google-genai",
     "langchain-google-genai",
+    "langgraph-checkpoint-postgres",
+    "psycopg-binary",
+    "google-api-python-client",
+    "google-auth-httplib2",
+    "google-auth-oauthlib",
+
 ]
+
+

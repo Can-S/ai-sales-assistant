@@ -30,6 +30,8 @@ desktop.ini
 
 # LangGraph/LangSmith
 .langsmith/
+.langgraph_api/
+*.pckl
 
 # Jupyter Notebook
 .ipynb_checkpoints
@@ -63,3 +65,6 @@ uv.lock
 
 # Antigravity brain directory 
 .gemini/
+
+# Test files with personal data
+test_*.py

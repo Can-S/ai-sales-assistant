@@ -25,12 +25,25 @@ print(f"From: {message_input['message_input']['sender']}")
 print(f"To: {message_input['message_input']['recipient']}")
 print(f"\nMessage Content:")
 print(message_input['message_input']['content'])
+
+# Generate consistent thread_id from platform + sender
+platform = message_input["message_input"]["platform"]
+sender = message_input["message_input"]["sender"]
+# Extract username (e.g., "Sarah Chen @sarahchen_marketing" -> "sarahchen_marketing")
+username = sender.split("@")[-1].strip() if "@" in sender else sender.replace(" ", "_").lower()
+thread_id = f"{platform}_{username}"
+
+print(f"\n🔑 Thread ID: {thread_id}")
+print("   (This ID links all conversations with this user)")
+
 print("\n" + "=" * 80)
 print("Running classification and response generation...")
 print("=" * 80 + "\n")
 
 try:
-    result = graph.invoke(message_input)
+    # Pass config with thread_id for conversation persistence
+    config = {"configurable": {"thread_id": thread_id}}
+    result = graph.invoke(message_input, config=config)
     
     print("\n" + "=" * 80)
     print("RESULT")

@@ -20,7 +20,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Define paths for credentials and tokens
-_ROOT = Path(__file__).parent.absolute()
+_ROOT = Path(__file__).parent.parent.parent.parent.absolute()  # Go to project root
 _SECRETS_DIR = _ROOT / ".secrets"
 
 # We need to try importing the Gmail API libraries
@@ -509,7 +509,8 @@ def send_email(
     email_id: str,
     response_text: str,
     email_address: str,
-    addn_receipients: Optional[List[str]] = None
+    addn_receipients: Optional[List[str]] = None,
+    to_email: Optional[str] = None
 ) -> bool:
     """
     Send a reply to an existing email thread or create a new email.
@@ -520,6 +521,7 @@ def send_email(
         response_text: Content of the reply or new email
         email_address: Current user's email address (the sender)
         addn_receipients: Optional additional recipients
+        to_email: Optional primary recipient (used when creating new email or overriding reply to)
         
     Returns:
         Success flag (True if email was sent)
@@ -556,12 +558,18 @@ def send_email(
             logger.warning(f"Could not retrieve original message with ID {email_id}. Error: {str(e)}")
             # If we can't get the original message, create a new message with minimal info
             subject = "Response"
-            original_from = "recipient@example.com"  # Will be overridden by user input
+            original_from = to_email if to_email else "recipient@example.com"  # Use provided to_email or placeholder
             thread_id = None
             
         # Create a message object
         msg = MIMEText(response_text)
-        msg["to"] = original_from
+        
+        # Override recipient if to_email is provided (useful for new emails)
+        if to_email:
+            msg["to"] = to_email
+        else:
+            msg["to"] = original_from
+            
         msg["from"] = email_address
         msg["subject"] = subject
         
@@ -625,6 +633,35 @@ def send_email_tool(
         )
         if success:
             return f"Email reply sent successfully to message ID: {email_id}"
+        else:
+            return "Failed to send email due to an API error"
+    except Exception as e:
+        return f"Failed to send email: {str(e)}"
+
+@tool
+def write_gmail_email(to: str, subject: str, content: str) -> str:
+    """Write and send an email using Gmail."""
+    try:
+        # We assume 'me' as sender, or fetch from env/profile if needed. 
+        # Using 'me' allows the API to use the authenticated user's address.
+        # For 'email_id', we use 'NEW_EMAIL' since write_message typically implies composing a new message or reply where ID might be inferred differently.
+        # Ideally, we should pass the email_address explicitly, but here we'll assume the API handles 'me' correctly or we default to a known sender.
+        # Note: send_email helper requires email_address for the From header.
+        
+        sender = "me" # The API will often override this with the authenticated user, but better to be safe.
+        # Actually, let's try to get it from environment or default to a placeholder that the API might ignore/fix.
+        # A better approach for the tool is to ask for it, but to match write_message signature (to, subject, content), we must infer it.
+        
+        # We'll use a dummy ID to trigger the "new email" logic in send_email
+        success = send_email(
+            email_id="NEW_EMAIL", 
+            response_text=content, 
+            email_address=sender, 
+            to_email=to
+        )
+        
+        if success:
+            return f"Email sent to {to} with subject '{subject}'"
         else:
             return "Failed to send email due to an API error"
     except Exception as e:

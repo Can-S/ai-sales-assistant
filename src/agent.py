@@ -7,17 +7,72 @@ from langchain_core.messages import HumanMessage
 
 from langgraph.graph import StateGraph, START, END
 from langgraph.types import interrupt, Command
+from langgraph.store.base import BaseStore
 
 import os
 from dotenv import load_dotenv
 
 from src.prompts import triage_system_prompt, triage_user_prompt, agent_system_prompt_hitl, default_background, default_triage_instructions, default_response_preferences, default_cal_preferences
-from src.schemas import State, RouterSchema, StateInput
-from src.utils import parse_message, format_for_display, format_message_markdown
+from src.schemas import State, RouterSchema, StateInput, UserPreferences
+from src.utils import parse_message, format_for_display, format_message_markdown, generate_thread_id
 from src.tools import get_tools, get_tools_by_name
 from src.tools.default.prompt_templates import HITL_TOOLS_PROMPT
 
 load_dotenv(".env")
+
+# Memory helper functions
+def get_user_preferences(store: BaseStore, thread_id: str) -> UserPreferences:
+    """Retrieve user preferences from Store.
+    
+    Args:
+        store: LangGraph Store instance
+        thread_id: User's thread ID (platform_username)
+    
+    Returns:
+        UserPreferences object (creates new if doesn't exist)
+    """
+    namespace = ("user_preferences",)
+    
+    # Try to get existing preferences
+    item = store.get(namespace, thread_id)
+    
+    if item:
+        return UserPreferences(**item.value)
+    else:
+        # Create new preferences
+        platform, username = thread_id.split("_", 1)
+        new_prefs = UserPreferences(
+            platform=platform,
+            username=username
+        )
+        store.put(namespace, thread_id, new_prefs.dict())
+        return new_prefs
+
+def update_user_preferences(store: BaseStore, thread_id: str, updates: dict):
+    """Update user preferences in Store.
+    
+    Args:
+        store: LangGraph Store instance
+        thread_id: User's thread ID
+        updates: Dictionary of fields to update
+    """
+    namespace = ("user_preferences",)
+    
+    # Get current preferences
+    prefs = get_user_preferences(store, thread_id)
+    
+    # Update fields
+    for key, value in updates.items():
+        if hasattr(prefs, key):
+            setattr(prefs, key, value)
+    
+    # Increment message count
+    prefs.total_messages += 1
+    
+    # Save back to store
+    store.put(namespace, thread_id, prefs.dict())
+
+
 
 # Enable Instagram and WhatsApp tools
 tools = get_tools(
@@ -32,6 +87,7 @@ tools = get_tools(
         "fetch_whatsapp_messages",
         "send_whatsapp_message"
     ],
+    include_gmail=True,
     include_instagram=True,
     include_whatsapp=True
 )
@@ -50,7 +106,7 @@ llm_router = model.with_structured_output(RouterSchema)
 # Initialize the LLM, enforcing tool use (of any available tools) for agent
 llm_with_tools = model.bind_tools(tools, tool_choice="required")
 
-def triage_router(state: State) -> Command[Literal["triage_interrupt_handler", "response_agent", "__end__"]]:
+def triage_router(state: State, store: BaseStore) -> Command[Literal["triage_interrupt_handler", "response_agent", "__end__"]]:
     """Analyze message content to decide if we should respond, notify, or ignore.
 
     The triage step prevents the assistant from wasting time on:
@@ -61,6 +117,12 @@ def triage_router(state: State) -> Command[Literal["triage_interrupt_handler", "
 
     # Parse the message input (generic for email, instagram, whatsapp)
     sender, recipient, subject, content, timestamp, platform = parse_message(state["message_input"])
+    
+    # Generate thread_id for this user
+    thread_id = generate_thread_id(platform, sender)
+    
+    # Get user preferences (creates new if doesn't exist)
+    user_prefs = get_user_preferences(store, thread_id)
     
     user_prompt = triage_user_prompt.format(
         platform=platform,
@@ -107,6 +169,7 @@ def triage_router(state: State) -> Command[Literal["triage_interrupt_handler", "
         # Update the state
         update = {
             "classification_decision": result.classification,
+            "thread_id": thread_id,
             "messages": [{"role": "user",
                             "content": f"Respond to the message: {message_markdown}"
                         }],
@@ -119,6 +182,7 @@ def triage_router(state: State) -> Command[Literal["triage_interrupt_handler", "
         # Update the state
         update = {
             "classification_decision": classification,
+            "thread_id": thread_id,
         }
 
     elif classification == "notify":
@@ -129,13 +193,14 @@ def triage_router(state: State) -> Command[Literal["triage_interrupt_handler", "
         # Update the state
         update = {
             "classification_decision": classification,
+            "thread_id": thread_id,
         }
 
     else:
         raise ValueError(f"Invalid classification: {classification}")
     return Command(goto=goto, update=update)
 
-def triage_interrupt_handler(state: State) -> Command[Literal["response_agent", "__end__"]]:
+def triage_interrupt_handler(state: State, store: BaseStore) -> Command[Literal["response_agent", "__end__"]]:
     """Handles interrupts from the triage step"""
     
     # Parse the message input
@@ -172,8 +237,16 @@ def triage_interrupt_handler(state: State) -> Command[Literal["response_agent", 
         "description": message_markdown,
     }
 
-    # Agent Inbox responds with a list  
-    response = interrupt([request])[0]
+    # Agent Inbox responds with a list
+    responses = interrupt([request])
+    
+    # Safety check: if no response, default to ignore
+    if not responses:
+        goto = END
+        update = {"messages": messages}
+        return Command(goto=goto, update=update)
+        
+    response = responses[0]
 
     # If user provides feedback, go to response agent and use feedback to respond to message   
     if response["type"] == "response":
@@ -201,7 +274,7 @@ def triage_interrupt_handler(state: State) -> Command[Literal["response_agent", 
 
     return Command(goto=goto, update=update)
 
-def llm_call(state: State):
+def llm_call(state: State, store: BaseStore):
     """LLM decides whether to call a tool or not"""
 
     return {
@@ -220,7 +293,7 @@ def llm_call(state: State):
         ]
     }
 
-def interrupt_handler(state: State) -> Command[Literal["llm_call", "__end__"]]:
+def interrupt_handler(state: State, store: BaseStore) -> Command[Literal["llm_call", "__end__"]]:
     """Creates an interrupt for human review of tool calls"""
     
     # Store messages
@@ -287,7 +360,13 @@ def interrupt_handler(state: State) -> Command[Literal["llm_call", "__end__"]]:
         }
 
         # Send to Agent Inbox and wait for response
-        response = interrupt([request])[0]
+        responses = interrupt([request])
+        
+        # Safety check: if no response (happens in some environments), skip this tool
+        if not responses:
+            continue
+            
+        response = responses[0]
 
         # Handle the responses 
         if response["type"] == "accept":
@@ -361,7 +440,7 @@ def interrupt_handler(state: State) -> Command[Literal["llm_call", "__end__"]]:
     return Command(goto=goto, update=update)
 
 # Conditional edge function
-def should_continue(state: State) -> Literal["interrupt_handler", "__end__"]:
+def should_continue(state: State, store: BaseStore) -> Literal["interrupt_handler", "__end__"]:
     """Route to tool handler, or end if Done tool called"""
     messages = state["messages"]
     last_message = messages[-1]
@@ -409,4 +488,32 @@ overall_workflow = (
     .add_edge(START, "triage_router")
 )
 
-graph = overall_workflow.compile()
+# Initialize PostgreSQL checkpointer and store if DATABASE_URL is set
+DB_URI = os.getenv("DATABASE_URL")
+
+if DB_URI:
+    try:
+        from langgraph.checkpoint.postgres import PostgresSaver
+        from psycopg_pool import ConnectionPool
+        
+        # Create connection pool
+        connection_pool = ConnectionPool(
+            conninfo=DB_URI,
+            max_size=20,
+        )
+        
+        # Create checkpointer with connection pool
+        checkpointer = PostgresSaver(connection_pool)
+        checkpointer.setup()
+        
+        # For now, compile with just checkpointer (Store requires async)
+        graph = overall_workflow.compile(checkpointer=checkpointer)
+        print("✅ PostgreSQL persistence enabled (Checkpointer)")
+    except Exception as e:
+        print(f"⚠️  PostgreSQL setup failed: {e}")
+        print("   Falling back to in-memory storage")
+        graph = overall_workflow.compile()
+else:
+    # No DATABASE_URL, use in-memory
+    graph = overall_workflow.compile()
+    print("ℹ️  Using in-memory storage (no DATABASE_URL found)")

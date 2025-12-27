@@ -95,19 +95,32 @@ def parse_message(message_input: dict) -> dict:
 
     Args:
         message_input (dict): Dictionary generic message fields.
+        Supports multiple formats:
+        - Generic: sender, recipient, content, subject, timestamp, platform
+        - Email: author (or from), to, email_thread (or body), subject, timestamp
+        - Gmail: from, to, body, subject, internalDate
 
     Returns:
         tuple: (sender, recipient, subject, content, timestamp, platform)
     """
     if message_input is None:
         message_input = {}
+    
+    # Handle different field name variations
+    sender = message_input.get("sender") or message_input.get("author") or message_input.get("from")
+    recipient = message_input.get("recipient") or message_input.get("to")
+    content = message_input.get("content") or message_input.get("email_thread") or message_input.get("body")
+    subject = message_input.get("subject")
+    timestamp = message_input.get("timestamp") or message_input.get("internalDate")
+    platform = message_input.get("platform", "email")
+    
     return (
-        message_input.get("sender"),
-        message_input.get("recipient"),
-        message_input.get("subject"),
-        message_input.get("content"),
-        message_input.get("timestamp"),
-        message_input.get("platform", "email"),
+        sender,
+        recipient,
+        subject,
+        content,
+        timestamp,
+        platform,
     )
 
 def parse_gmail_message(message_input: dict) -> tuple:
@@ -185,3 +198,39 @@ def show_graph(graph, xray=False):
     """Display a LangGraph mermaid diagram with fallback rendering."""
     from IPython.display import Image
     return Image(graph.get_graph(xray=xray).draw_mermaid_png())
+
+def generate_thread_id(platform: str, sender: str) -> str:
+    """Generate consistent thread_id from platform and sender.
+    
+    Args:
+        platform: Platform name (instagram, whatsapp, email, gmail)
+        sender: Sender identifier (e.g., "Sarah Chen @sarahchen_marketing" or "john@example.com")
+    
+    Returns:
+        thread_id: Consistent identifier (e.g., "instagram_sarahchen_marketing")
+    
+    Examples:
+        >>> generate_thread_id("instagram", "Sarah Chen @sarahchen_marketing")
+        'instagram_sarahchen_marketing'
+        >>> generate_thread_id("whatsapp", "John Doe")
+        'whatsapp_john_doe'
+    """
+    if platform.lower() in ["email", "gmail"]:
+        # For emails, use the full address but sanitized
+        # Extract email if in "Name <email>" format
+        if "<" in sender and ">" in sender:
+            import re
+            match = re.search(r'<([^>]+)>', sender)
+            if match:
+                sender = match.group(1)
+        
+        username = sender.strip().replace("@", "_at_").replace(".", "_")
+    elif "@" in sender:
+        username = sender.split("@")[-1].strip()
+    else:
+        username = sender.replace(" ", "_").lower()
+    
+    # Ensure safe characters
+    username = "".join(c for c in username if c.isalnum() or c in "_-")
+    
+    return f"{platform}_{username}"

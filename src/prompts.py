@@ -228,6 +228,7 @@ Messages that should be known about but don't require immediate response (use `n
 - FYI messages without action items
 
 Messages that MUST be responded to:
+- ANY direct questions that require an answer (e.g., questions about documentation, processes, services, products)
 - ANY inquiries about AI training programs or pricing
 - Questions about team size, custom training, or specific programs
 - Requests for discovery calls or consultations
@@ -238,6 +239,8 @@ Messages that MUST be responded to:
 - Direct messages on social media asking about services
 - Comments asking for more information about programs
 - Referrals or recommendations from existing clients
+- Messages asking for clarification, help, or information
+- Messages from colleagues or business contacts with questions
 """
 
 MEMORY_UPDATE_INSTRUCTIONS = """
